@@ -20,8 +20,9 @@ pip install -r requirements.txt
 # 2. Install the Playwright browsers (first time only)
 python -m playwright install chromium
 
-# 3. Edit config.py with your receipt code and desired responses
-#    - Set SURVEY_CODE to the 26-digit code from your receipt
+# 3. Edit config.py with your receipt code, price, and desired responses
+#    - Set SURVEY_CODE to the code from your receipt (format: XXXX-XXXX-XXXX)
+#    - Set PRICE to the total from your receipt (format: XX.XX)
 #    - Adjust satisfaction ratings if needed
 
 # 4. Run the automation
@@ -32,7 +33,8 @@ python automate_survey.py
 
 | Setting               | Description                                           |
 |-----------------------|-------------------------------------------------------|
-| `SURVEY_CODE`         | 26-digit code from your McDonald's receipt            |
+| `SURVEY_CODE`         | Survey code from your receipt (format: XXXX-XXXX-XXXX) |
+| `PRICE`               | Total price from your receipt (format: XX.XX)          |
 | `RESPONSES`           | Dictionary of question → rating value (see scale below)|
 | `ADDITIONAL_COMMENTS` | Free-text comment (leave empty to skip)               |
 | `HEADLESS`            | `True` to run without a visible browser window        |

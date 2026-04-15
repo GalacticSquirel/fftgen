@@ -5,8 +5,11 @@ Edit the values below to match your receipt and desired survey responses.
 """
 
 # ── Receipt Details ──────────────────────────────────────────────────────────
-# The 26-digit survey code printed on your McDonald's receipt.
-SURVEY_CODE = "00000000000000000000000000"
+# The survey code printed on your McDonald's receipt (format: XXXX-XXXX-XXXX).
+SURVEY_CODE = "0000-0000-0000"
+
+# The total price from your receipt (format: XX.XX).
+PRICE = "00.00"
 
 # ── Survey Responses ─────────────────────────────────────────────────────────
 # Rating scale used by the survey (typically 1-5):
