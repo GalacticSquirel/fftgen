@@ -127,7 +127,7 @@ def step_answer_questions(page: Page) -> None:
             print(f"  ⚠  No radio buttons found for '{label}' – skipping")
         else:
             # If multiple radio groups on one page, handle each group.
-            groups: dict[str, list] = {}
+            groups: dict[str, list[object]] = {}
             for i in range(radios.count()):
                 name = radios.nth(i).get_attribute("name") or f"group_{i}"
                 groups.setdefault(name, []).append(radios.nth(i))
