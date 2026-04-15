@@ -52,7 +52,7 @@ def _enter_price(page: Page) -> None:
     # Split price into dollars and cents (e.g. "12.34" → "12", "34").
     parts = price.split(".")
     if len(parts) != 2:
-        print(f"  ⚠  Price must be in XX.XX format, got: {price}")
+        print(f"  ⚠  Price must be in XX.XX format (dollars.cents), got: {price}")
         return
 
     dollars, cents = parts
@@ -121,7 +121,7 @@ def step_enter_code(page: Page) -> None:
     # Split the XXXX-XXXX-XXXX code into its three segments.
     code_segments = config.SURVEY_CODE.split("-")
     if len(code_segments) != 3 or not all(len(s) == 4 for s in code_segments):
-        print(f"  ⚠  Survey code must be in XXXX-XXXX-XXXX format, got: {config.SURVEY_CODE}")
+        print(f"  ⚠  Survey code must be in XXXX-XXXX-XXXX format (three 4-character segments), got: {config.SURVEY_CODE}")
         return
 
     # Pattern A: Multiple segmented input fields (CN1, CN2, CN3).
