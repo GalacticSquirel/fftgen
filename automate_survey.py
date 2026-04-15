@@ -170,8 +170,9 @@ def _handle_none(page: Page, page_def: dict[str, Any], step: int) -> None:
 
     try:
         _click_next(page)
-    except Exception:
-        pass  # welcome page may auto-advance or have no Next button
+    except (PwTimeout, Exception) as exc:
+        # Welcome page may auto-advance or have no Next button.
+        print(f"  ℹ  Could not click Next on '{page_def['id']}' (may be expected): {exc}")
 
     print(f"  ✔  {page_def['description']}")
 
