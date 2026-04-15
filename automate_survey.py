@@ -19,7 +19,7 @@ import sys
 from pathlib import Path
 from typing import Any
 
-from playwright.sync_api import Page, sync_playwright, TimeoutError as PwTimeout
+from playwright.sync_api import Locator, Page, sync_playwright, TimeoutError as PwTimeout
 
 import config
 
@@ -153,7 +153,7 @@ def _handle_radio(page: Page, page_def: dict[str, Any], step: int) -> None:
         print(f"  ⚠  No radio buttons found for '{page_def['description']}' – skipping")
     else:
         # Group radios by their name attribute.
-        groups: dict[str, list[object]] = {}
+        groups: dict[str, list[Locator]] = {}
         for i in range(radios.count()):
             name = radios.nth(i).get_attribute("name") or f"group_{i}"
             groups.setdefault(name, []).append(radios.nth(i))
