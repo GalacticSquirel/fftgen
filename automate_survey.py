@@ -44,6 +44,52 @@ def _click_next(page: Page) -> None:
     page.wait_for_load_state("domcontentloaded")
 
 
+def _enter_price(page: Page) -> None:
+    """Enter the receipt price (XX.XX) on the price input page."""
+    price = config.PRICE
+    print(f"▶ Entering price: ${price}")
+
+    # Split price into dollars and cents (e.g. "12.34" → "12", "34").
+    parts = price.split(".")
+    if len(parts) != 2:
+        print(f"  ⚠  Price must be in XX.XX format (dollars.cents), got: {price}")
+        return
+
+    dollars, cents = parts
+
+    # Try to find dedicated dollar/cent fields.
+    dollar_field = page.locator("input#DollarSign, input[name='DollarSign'], input#Dollar, input[name='Dollar']")
+    cent_field = page.locator("input#CentSign, input[name='CentSign'], input#Cent, input[name='Cent']")
+
+    if dollar_field.count() > 0 and cent_field.count() > 0:
+        dollar_field.first.fill(dollars)
+        cent_field.first.fill(cents)
+        _screenshot(page, "02b_price_entered")
+        _click_next(page)
+        print("  ✔  Price submitted (dollar/cent fields)")
+        return
+
+    # Fallback: look for visible text inputs on the current page.
+    text_inputs = page.locator("input[type='text']:visible")
+    if text_inputs.count() >= 2:
+        text_inputs.nth(0).fill(dollars)
+        text_inputs.nth(1).fill(cents)
+        _screenshot(page, "02b_price_entered")
+        _click_next(page)
+        print("  ✔  Price submitted (generic text inputs)")
+        return
+
+    if text_inputs.count() == 1:
+        text_inputs.first.fill(price)
+        _screenshot(page, "02b_price_entered")
+        _click_next(page)
+        print("  ✔  Price submitted (single input)")
+        return
+
+    _screenshot(page, "02b_price_field_not_found")
+    print("  ⚠  Could not locate the price input field – check screenshot")
+
+
 def _select_radio(page: Page, value: str) -> None:
     """Select a radio button by its value on the current question page."""
     radio = page.locator(f"input[type='radio'][value='{value}']")
@@ -69,46 +115,39 @@ def step_welcome(page: Page) -> None:
 
 
 def step_enter_code(page: Page) -> None:
-    """Enter the 26-digit survey code from the receipt."""
-    print(f"▶ Entering survey code: {config.SURVEY_CODE[:6]}…")
+    """Enter the survey code (XXXX-XXXX-XXXX) and price from the receipt."""
+    print(f"▶ Entering survey code: {config.SURVEY_CODE}")
 
-    # The SMG survey platform typically splits the code into multiple fields
-    # or uses a single text input. Try the common patterns.
-    code = config.SURVEY_CODE
-
-    # Pattern A: Single input field for the full code.
-    single_input = page.locator("input#CN1, input[name='CN1']")
-    if single_input.count() > 0:
-        single_input.fill(code)
-        _screenshot(page, "02_code_entered")
-        _click_next(page)
-        print("  ✔  Code submitted (single field)")
+    # Split the XXXX-XXXX-XXXX code into its three segments.
+    code_segments = config.SURVEY_CODE.split("-")
+    if len(code_segments) != 3 or not all(len(s) == 4 for s in code_segments):
+        print(f"  ⚠  Survey code must be in XXXX-XXXX-XXXX format (three 4-character segments), got: {config.SURVEY_CODE}")
         return
 
-    # Pattern B: Multiple segmented input fields (CN1 … CNn).
-    segments = page.locator("input[id^='CN']")
-    if segments.count() > 0:
-        seg_count = segments.count()
-        chunk_size = len(code) // seg_count
-        for i in range(seg_count):
-            chunk = code[i * chunk_size:(i + 1) * chunk_size]
-            segments.nth(i).fill(chunk)
+    # Pattern A: Multiple segmented input fields (CN1, CN2, CN3).
+    cn_fields = page.locator("input[id^='CN']")
+    if cn_fields.count() >= 3:
+        for i in range(3):
+            cn_fields.nth(i).fill(code_segments[i])
         _screenshot(page, "02_code_entered")
         _click_next(page)
-        print(f"  ✔  Code submitted ({seg_count} fields)")
-        return
+        print(f"  ✔  Code submitted (3 segmented fields)")
+    else:
+        # Fallback: try generic visible text inputs in order.
+        text_inputs = page.locator("input[type='text']:visible")
+        if text_inputs.count() >= 3:
+            for i in range(3):
+                text_inputs.nth(i).fill(code_segments[i])
+            _screenshot(page, "02_code_entered")
+            _click_next(page)
+            print("  ✔  Code submitted (generic text inputs)")
+        else:
+            _screenshot(page, "02_code_field_not_found")
+            print("  ⚠  Could not locate the survey code input fields – check screenshot")
+            return
 
-    # Pattern C: Generic visible text inputs.
-    text_inputs = page.locator("input[type='text']:visible")
-    if text_inputs.count() > 0:
-        text_inputs.first.fill(code)
-        _screenshot(page, "02_code_entered")
-        _click_next(page)
-        print("  ✔  Code submitted (generic text input)")
-        return
-
-    _screenshot(page, "02_code_field_not_found")
-    print("  ⚠  Could not locate the survey code input field – check screenshot")
+    # Enter the price on the next page/section.
+    _enter_price(page)
 
 
 def step_answer_questions(page: Page) -> None:
