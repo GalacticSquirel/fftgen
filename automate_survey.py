@@ -91,6 +91,44 @@ def parse_survey_file(filepath: str) -> list[dict[str, Any]]:
 
 # ── Helpers ──────────────────────────────────────────────────────────────────
 
+def _wait_for_page_ready(page: Page, page_def: dict[str, Any]) -> None:
+    """Wait for the expected interactive content to appear on the page.
+
+    The survey is an ASP.NET postback form – after each Next click the
+    server returns a new HTML document.  ``domcontentloaded`` fires before
+    the branded-input JavaScript has created the visible radio/checkbox
+    wrappers, so we additionally wait for the *specific* elements that
+    the handler is about to interact with.
+    """
+    page_type = page_def["type"]
+    groups = page_def.get("groups", [])
+    fields = page_def.get("fields", [])
+    timeout = 10_000  # ms
+
+    try:
+        if page_type in ("radio", "checkbox") and groups:
+            # Wait for the first group's inputs to be present.
+            page.locator(f"input[name='{groups[0]}']").first.wait_for(
+                state="attached", timeout=timeout,
+            )
+        elif page_type == "text" and fields:
+            page.locator(f"input#{fields[0]}").first.wait_for(
+                state="attached", timeout=timeout,
+            )
+        elif page_type == "textarea":
+            page.locator("textarea").first.wait_for(
+                state="attached", timeout=timeout,
+            )
+        else:
+            # Informational / none pages – just make sure the Next button
+            # (or page body) is there.
+            page.locator("#surveyQuestions, #NextButton").first.wait_for(
+                state="attached", timeout=timeout,
+            )
+    except PwTimeout:
+        pass  # Best-effort; the handler will report its own warnings.
+
+
 def _screenshot(page: Page, name: str) -> None:
     """Save a timestamped screenshot for debugging."""
     out = Path(config.SCREENSHOT_DIR)
@@ -101,7 +139,12 @@ def _screenshot(page: Page, name: str) -> None:
 
 
 def _click_next(page: Page) -> None:
-    """Click the 'Next' button that advances the survey."""
+    """Click the 'Next' button that advances the survey.
+
+    After clicking, we wait for both ``domcontentloaded`` **and**
+    ``networkidle`` so that the branded-input JavaScript has finished
+    rendering the next page's interactive elements.
+    """
     next_btn = page.locator("input#NextButton")
     if next_btn.count() == 0:
         # Fallback selectors for different survey versions.
@@ -110,16 +153,30 @@ def _click_next(page: Page) -> None:
         next_btn = page.locator("a.NextButton, button.NextButton, #NextButton")
     next_btn.first.click()
     page.wait_for_load_state("domcontentloaded")
+    # Also wait for network activity to settle so branded-input JS can run.
+    try:
+        page.wait_for_load_state("networkidle", timeout=10_000)
+    except PwTimeout:
+        pass  # Best-effort; proceed even if the network doesn't fully idle.
 
 
 def _select_radio(page: Page, group_name: str, value: str) -> bool:
     """Select a radio button by its group name and value.
 
     The actual survey uses sr-only radio inputs with branded label styling,
-    so we click the parent container (`.rbloption`) or the label when the
-    raw input is hidden.
+    so we try several strategies:
+      1. Direct click on the hidden ``<input>`` with ``force=True``.
+      2. Click the parent wrapper cell/div (``.inputtyperbloption`` or
+         ``.rbloption``) which is the visible, clickable branded element.
+      3. Click a ``<label>`` element (rare in this survey but kept for
+         compatibility).
+      4. Last resort: use JavaScript ``element.click()`` to toggle the
+         radio programmatically.
     """
-    # Try direct radio input click first.
+    radio_id = f"{group_name}.{value}"
+
+    # Strategy 1: direct click on the hidden <input> (force bypasses
+    # visibility checks but may still fail when the element has zero size).
     radio = page.locator(f"input[name='{group_name}'][value='{value}']")
     if radio.count() > 0:
         try:
@@ -128,11 +185,34 @@ def _select_radio(page: Page, group_name: str, value: str) -> bool:
         except Exception:
             pass
 
-    # Fallback: click the label or parent wrapper.
-    label = page.locator(f"label[for='{group_name}.{value}']")
+    # Strategy 2: click the parent branded-input container.  The survey
+    # wraps each radio in a <td class="inputtyperbloption"> (table layout)
+    # or a <div class="rbloption"> (vertical list layout).
+    escaped_id = radio_id.replace(".", "\\\\.")
+    wrapper = page.locator(
+        f"td.inputtyperbloption:has(input#{escaped_id}), "
+        f"div.rbloption:has(input#{escaped_id})"
+    )
+    if wrapper.count() > 0:
+        try:
+            wrapper.first.click()
+            return True
+        except Exception:
+            pass
+
+    # Strategy 3: click a <label for="..."> element (kept for compat).
+    label = page.locator(f"label[for='{radio_id}']")
     if label.count() > 0:
         try:
             label.first.click()
+            return True
+        except Exception:
+            pass
+
+    # Strategy 4: use JavaScript to programmatically click the input.
+    if radio.count() > 0:
+        try:
+            radio.first.evaluate("el => el.click()")
             return True
         except Exception:
             pass
@@ -381,7 +461,7 @@ def main() -> None:
         try:
             # Navigate to the survey once; then iterate through pages.
             print("▶ Opening survey …")
-            page.goto(SURVEY_URL, wait_until="domcontentloaded", timeout=30_000)
+            page.goto(SURVEY_URL, wait_until="networkidle", timeout=30_000)
 
             for step, page_def in enumerate(pages, start=1):
                 page_type = page_def["type"]
@@ -390,6 +470,7 @@ def main() -> None:
                     print(f"  ⚠  Unknown page type '{page_type}' for '{page_def['id']}' – skipping")
                     continue
                 print(f"▶ Page {step}/{len(pages)}: {page_def['description']}")
+                _wait_for_page_ready(page, page_def)
                 handler(page, page_def, step)
 
             print("\n✅  Survey automation complete!")
