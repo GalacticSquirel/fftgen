@@ -116,10 +116,19 @@ def _select_radio(page: Page, group_name: str, value: str) -> bool:
     """Select a radio button by its group name and value.
 
     The actual survey uses sr-only radio inputs with branded label styling,
-    so we click the parent container (`.rbloption`) or the label when the
-    raw input is hidden.
+    so we try several strategies:
+      1. Direct click on the hidden ``<input>`` with ``force=True``.
+      2. Click the parent wrapper cell/div (``.inputtyperbloption`` or
+         ``.rbloption``) which is the visible, clickable branded element.
+      3. Click a ``<label>`` element (rare in this survey but kept for
+         compatibility).
+      4. Last resort: use JavaScript ``element.click()`` to toggle the
+         radio programmatically.
     """
-    # Try direct radio input click first.
+    radio_id = f"{group_name}.{value}"
+
+    # Strategy 1: direct click on the hidden <input> (force bypasses
+    # visibility checks but may still fail when the element has zero size).
     radio = page.locator(f"input[name='{group_name}'][value='{value}']")
     if radio.count() > 0:
         try:
@@ -128,11 +137,33 @@ def _select_radio(page: Page, group_name: str, value: str) -> bool:
         except Exception:
             pass
 
-    # Fallback: click the label or parent wrapper.
-    label = page.locator(f"label[for='{group_name}.{value}']")
+    # Strategy 2: click the parent branded-input container.  The survey
+    # wraps each radio in a <td class="inputtyperbloption"> (table layout)
+    # or a <div class="rbloption"> (vertical list layout).
+    wrapper = page.locator(
+        f"td.inputtyperbloption:has(input#{radio_id.replace('.', '\\\\.')}), "
+        f"div.rbloption:has(input#{radio_id.replace('.', '\\\\.')})"
+    )
+    if wrapper.count() > 0:
+        try:
+            wrapper.first.click()
+            return True
+        except Exception:
+            pass
+
+    # Strategy 3: click a <label for="..."> element (kept for compat).
+    label = page.locator(f"label[for='{radio_id}']")
     if label.count() > 0:
         try:
             label.first.click()
+            return True
+        except Exception:
+            pass
+
+    # Strategy 4: use JavaScript to programmatically click the input.
+    if radio.count() > 0:
+        try:
+            radio.first.evaluate("el => el.click()")
             return True
         except Exception:
             pass
