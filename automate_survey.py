@@ -188,7 +188,7 @@ def _select_radio(page: Page, group_name: str, value: str) -> bool:
     # Strategy 2: click the parent branded-input container.  The survey
     # wraps each radio in a <td class="inputtyperbloption"> (table layout)
     # or a <div class="rbloption"> (vertical list layout).
-    escaped_id = radio_id.replace(".", "\\\\.")
+    escaped_id = radio_id.replace(".", "\\.")
     wrapper = page.locator(
         f"td.inputtyperbloption:has(input#{escaped_id}), "
         f"div.rbloption:has(input#{escaped_id})"
