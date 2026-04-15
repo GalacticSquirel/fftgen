@@ -76,10 +76,35 @@ can verify the automation ran correctly.
 ```
 ├── automate_survey.py   # Main automation script
 ├── config.py            # Survey code, responses, and settings
+├── survey.txt           # Survey page definitions (order, type, options)
 ├── requirements.txt     # Python dependencies
 ├── screenshots/         # Auto-generated screenshots per step
 └── README.md            # This file
 ```
+
+## Adding or Removing Survey Pages
+
+All survey pages are defined in `survey.txt`.  To add a new page, append a
+block like:
+
+```ini
+[my_new_question]
+type = radio
+options = 1,2,3,4,5
+description = How satisfied were you with …
+```
+
+Then add a matching entry in `config.py`:
+
+```python
+RESPONSES = {
+    ...
+    "my_new_question": "1",
+}
+```
+
+To remove a page, delete its block from `survey.txt` and the corresponding
+key from `RESPONSES`.  No changes to `automate_survey.py` are needed.
 
 ## Disclaimer
 

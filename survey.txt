@@ -1,0 +1,87 @@
+# McDonald's Food for Thoughts Survey – Page Definitions
+#
+# This file describes every page of the survey so that automate_survey.py
+# can drive through them automatically, using values from config.py.
+#
+# Format
+# ------
+# [page_id]
+# type    = none | text | radio | textarea
+# fields  = comma-separated list of HTML field identifiers (for text pages)
+# options = comma-separated list of valid values   (for radio pages)
+# description = human-readable label shown in logs
+#
+# Lines starting with '#' are comments. Blank lines are ignored.
+# Pages are processed in the order they appear in this file.
+
+[welcome]
+type = none
+description = Welcome / landing page
+
+[survey_code]
+type = text
+fields = CN1,CN2,CN3
+description = Survey code from receipt (XXXX-XXXX-XXXX)
+
+[price]
+type = text
+fields = Dollar,Cent
+description = Receipt total price (XX.XX)
+
+[visit_type]
+type = radio
+options = 1,2,3,4,5
+description = Type of visit (1=Dine-in, 2=Drive-thru, 3=Carry-out, 4=Delivery, 5=Other)
+
+[overall_satisfaction]
+type = radio
+options = 1,2,3,4,5
+description = Overall satisfaction with your visit
+
+[food_quality]
+type = radio
+options = 1,2,3,4,5
+description = Satisfaction with food quality and taste
+
+[speed_of_service]
+type = radio
+options = 1,2,3,4,5
+description = Satisfaction with speed of service
+
+[friendliness]
+type = radio
+options = 1,2,3,4,5
+description = Satisfaction with friendliness of staff
+
+[accuracy_of_order]
+type = radio
+options = 1,2,3,4,5
+description = Satisfaction with order accuracy
+
+[cleanliness]
+type = radio
+options = 1,2,3,4,5
+description = Satisfaction with restaurant cleanliness
+
+[value_for_money]
+type = radio
+options = 1,2,3,4,5
+description = Satisfaction with value for money
+
+[likely_to_return]
+type = radio
+options = 1,2,3,4,5
+description = Likelihood to visit again (1=Highly Likely … 5=Highly Unlikely)
+
+[likely_to_recommend]
+type = radio
+options = 1,2,3,4,5
+description = Likelihood to recommend to others
+
+[additional_comments]
+type = textarea
+description = Optional free-text comments about your experience
+
+[validation_code]
+type = none
+description = Final page – displays the validation / offer code

@@ -5,6 +5,9 @@ McDonald's Food for Thoughts Survey Automation
 Automates the customer feedback survey at https://www.mcdfoodforthoughts.com/
 using Playwright. Configure your receipt code and desired responses in config.py.
 
+The list and order of survey pages is read from survey.txt so that every page
+is programmable through config.py without touching automation code.
+
 Usage:
     python automate_survey.py
 """
@@ -14,6 +17,7 @@ from __future__ import annotations
 import os
 import sys
 from pathlib import Path
+from typing import Any
 
 from playwright.sync_api import Page, sync_playwright, TimeoutError as PwTimeout
 
@@ -21,6 +25,65 @@ import config
 
 
 SURVEY_URL = "https://www.mcdfoodforthoughts.com/"
+
+
+# ── Survey-definition parser ────────────────────────────────────────────────
+
+def parse_survey_file(filepath: str) -> list[dict[str, Any]]:
+    """Parse *survey.txt* and return an ordered list of page definitions.
+
+    Each element is a dict with keys:
+        id          – page identifier (matches config.RESPONSES keys)
+        type        – "none" | "text" | "radio" | "textarea"
+        fields      – list[str]  (only for type == "text")
+        options     – list[str]  (only for type == "radio")
+        description – human-readable label
+    """
+    pages: list[dict[str, Any]] = []
+    current: dict[str, Any] | None = None
+
+    with open(filepath, encoding="utf-8") as fh:
+        for raw_line in fh:
+            line = raw_line.strip()
+
+            # Skip blank lines and comments.
+            if not line or line.startswith("#"):
+                continue
+
+            # New page header: [page_id]
+            if line.startswith("[") and line.endswith("]"):
+                if current is not None:
+                    pages.append(current)
+                page_id = line[1:-1].strip()
+                current = {
+                    "id": page_id,
+                    "type": "none",
+                    "fields": [],
+                    "options": [],
+                    "description": page_id,
+                }
+                continue
+
+            # Key = value inside a page block.
+            if "=" in line and current is not None:
+                key, _, value = line.partition("=")
+                key = key.strip()
+                value = value.strip()
+
+                if key == "type":
+                    current["type"] = value
+                elif key == "fields":
+                    current["fields"] = [f.strip() for f in value.split(",") if f.strip()]
+                elif key == "options":
+                    current["options"] = [o.strip() for o in value.split(",") if o.strip()]
+                elif key == "description":
+                    current["description"] = value
+
+    # Don't forget the last page.
+    if current is not None:
+        pages.append(current)
+
+    return pages
 
 
 # ── Helpers ──────────────────────────────────────────────────────────────────
@@ -44,188 +107,192 @@ def _click_next(page: Page) -> None:
     page.wait_for_load_state("domcontentloaded")
 
 
-def _enter_price(page: Page) -> None:
-    """Enter the receipt price (XX.XX) on the price input page."""
-    price = config.PRICE
-    print(f"▶ Entering price: ${price}")
+# ── Page handlers (keyed by page type) ──────────────────────────────────────
 
-    # Split price into dollars and cents (e.g. "12.34" → "12", "34").
-    parts = price.split(".")
-    if len(parts) != 2:
-        print(f"  ⚠  Price must be in XX.XX format (dollars.cents), got: {price}")
-        return
+def _handle_none(page: Page, page_def: dict[str, Any], step: int) -> None:
+    """Handle informational pages that need no input (welcome, validation)."""
+    _screenshot(page, f"{step:02d}_{page_def['id']}")
 
-    dollars, cents = parts
+    if page_def["id"] == "validation_code":
+        _capture_validation_code(page)
+        return  # Final page – nothing to advance to.
 
-    # Try to find dedicated dollar/cent fields.
-    dollar_field = page.locator("input#DollarSign, input[name='DollarSign'], input#Dollar, input[name='Dollar']")
-    cent_field = page.locator("input#CentSign, input[name='CentSign'], input#Cent, input[name='Cent']")
-
-    if dollar_field.count() > 0 and cent_field.count() > 0:
-        dollar_field.first.fill(dollars)
-        cent_field.first.fill(cents)
-        _screenshot(page, "02b_price_entered")
+    try:
         _click_next(page)
-        print("  ✔  Price submitted (dollar/cent fields)")
-        return
-
-    # Fallback: look for visible text inputs on the current page.
-    text_inputs = page.locator("input[type='text']:visible")
-    if text_inputs.count() >= 2:
-        text_inputs.nth(0).fill(dollars)
-        text_inputs.nth(1).fill(cents)
-        _screenshot(page, "02b_price_entered")
-        _click_next(page)
-        print("  ✔  Price submitted (generic text inputs)")
-        return
-
-    if text_inputs.count() == 1:
-        text_inputs.first.fill(price)
-        _screenshot(page, "02b_price_entered")
-        _click_next(page)
-        print("  ✔  Price submitted (single input)")
-        return
-
-    _screenshot(page, "02b_price_field_not_found")
-    print("  ⚠  Could not locate the price input field – check screenshot")
+    except Exception:
+        pass  # welcome page may auto-advance or have no Next button
 
 
-def _select_radio(page: Page, value: str) -> None:
-    """Select a radio button by its value on the current question page."""
-    radio = page.locator(f"input[type='radio'][value='{value}']")
-    if radio.count() > 0:
-        radio.first.click()
+def _handle_text(page: Page, page_def: dict[str, Any], step: int) -> None:
+    """Handle text-input pages (survey code, price)."""
+    page_id = page_def["id"]
+
+    if page_id == "survey_code":
+        _enter_survey_code(page, step)
+    elif page_id == "price":
+        _enter_price(page, step)
     else:
-        # Some survey versions use table-based layouts.
-        radio = page.locator(f"td.Opt{value} input, label:has-text('{value}') input")
-        if radio.count() > 0:
-            radio.first.click()
-        else:
-            print(f"  ⚠  Could not find radio button with value '{value}'")
+        # Generic text-field handler: fill visible text inputs in order.
+        values = config.RESPONSES.get(page_id, "").split(",")
+        text_inputs = page.locator("input[type='text']:visible")
+        for i in range(min(len(values), text_inputs.count())):
+            text_inputs.nth(i).fill(values[i].strip())
+        _screenshot(page, f"{step:02d}_{page_id}")
+        _click_next(page)
+
+    print(f"  ✔  {page_def['description']}")
 
 
-# ── Survey Steps ─────────────────────────────────────────────────────────────
+def _handle_radio(page: Page, page_def: dict[str, Any], step: int) -> None:
+    """Handle radio-button pages (satisfaction ratings, visit type, …)."""
+    page_id = page_def["id"]
+    value = config.RESPONSES.get(page_id, "1")
 
-def step_welcome(page: Page) -> None:
-    """Navigate to the survey and verify the landing page loads."""
-    print("▶ Opening survey …")
-    page.goto(SURVEY_URL, wait_until="domcontentloaded", timeout=30_000)
-    _screenshot(page, "01_welcome")
-    print("  ✔  Welcome page loaded")
+    radios = page.locator("input[type='radio']:visible")
+    if radios.count() == 0:
+        print(f"  ⚠  No radio buttons found for '{page_def['description']}' – skipping")
+    else:
+        # Group radios by their name attribute.
+        groups: dict[str, list[object]] = {}
+        for i in range(radios.count()):
+            name = radios.nth(i).get_attribute("name") or f"group_{i}"
+            groups.setdefault(name, []).append(radios.nth(i))
+
+        for _group_name, group_radios in groups.items():
+            selected = False
+            for radio in group_radios:
+                if radio.get_attribute("value") == value:
+                    radio.click()
+                    selected = True
+                    break
+            if not selected and group_radios:
+                group_radios[0].click()
+
+    _screenshot(page, f"{step:02d}_{page_id}")
+
+    try:
+        _click_next(page)
+    except PwTimeout:
+        print(f"  ⚠  Timed out clicking Next on '{page_id}' – may already be on next page")
+    except Exception as exc:
+        print(f"  ⚠  Error advancing past '{page_id}': {exc}")
+
+    print(f"  ✔  {page_def['description']} → {value}")
 
 
-def step_enter_code(page: Page) -> None:
-    """Enter the survey code (XXXX-XXXX-XXXX) and price from the receipt."""
+def _handle_textarea(page: Page, page_def: dict[str, Any], step: int) -> None:
+    """Handle free-text comment pages."""
+    page_id = page_def["id"]
+    text = config.RESPONSES.get(page_id, "")
+
+    if not text:
+        print(f"▶ Skipping {page_def['description']} (empty in config)")
+        _screenshot(page, f"{step:02d}_{page_id}_skipped")
+        try:
+            _click_next(page)
+        except Exception:
+            pass
+        return
+
+    textarea = page.locator("textarea:visible")
+    if textarea.count() > 0:
+        textarea.first.fill(text)
+        _screenshot(page, f"{step:02d}_{page_id}")
+        _click_next(page)
+        print(f"  ✔  {page_def['description']} submitted")
+    else:
+        _screenshot(page, f"{step:02d}_{page_id}_not_found")
+        print(f"  ⚠  No textarea found for '{page_def['description']}'")
+
+
+_PAGE_HANDLERS = {
+    "none": _handle_none,
+    "text": _handle_text,
+    "radio": _handle_radio,
+    "textarea": _handle_textarea,
+}
+
+
+# ── Specialised text-page helpers ────────────────────────────────────────────
+
+def _enter_survey_code(page: Page, step: int) -> None:
+    """Enter the survey code (XXXX-XXXX-XXXX) from the receipt."""
     print(f"▶ Entering survey code: {config.SURVEY_CODE}")
 
-    # Split the XXXX-XXXX-XXXX code into its three segments.
     code_segments = config.SURVEY_CODE.split("-")
     if len(code_segments) != 3 or not all(len(s) == 4 for s in code_segments):
-        print(f"  ⚠  Survey code must be in XXXX-XXXX-XXXX format (three 4-character segments), got: {config.SURVEY_CODE}")
+        print(f"  ⚠  Survey code must be in XXXX-XXXX-XXXX format, got: {config.SURVEY_CODE}")
         return
 
-    # Pattern A: Multiple segmented input fields (CN1, CN2, CN3).
     cn_fields = page.locator("input[id^='CN']")
     if cn_fields.count() >= 3:
         for i in range(3):
             cn_fields.nth(i).fill(code_segments[i])
-        _screenshot(page, "02_code_entered")
+        _screenshot(page, f"{step:02d}_survey_code")
         _click_next(page)
-        print(f"  ✔  Code submitted (3 segmented fields)")
     else:
-        # Fallback: try generic visible text inputs in order.
         text_inputs = page.locator("input[type='text']:visible")
         if text_inputs.count() >= 3:
             for i in range(3):
                 text_inputs.nth(i).fill(code_segments[i])
-            _screenshot(page, "02_code_entered")
+            _screenshot(page, f"{step:02d}_survey_code")
             _click_next(page)
-            print("  ✔  Code submitted (generic text inputs)")
         else:
-            _screenshot(page, "02_code_field_not_found")
-            print("  ⚠  Could not locate the survey code input fields – check screenshot")
-            return
-
-    # Enter the price on the next page/section.
-    _enter_price(page)
+            _screenshot(page, f"{step:02d}_survey_code_not_found")
+            print("  ⚠  Could not locate survey code input fields – check screenshot")
 
 
-def step_answer_questions(page: Page) -> None:
-    """Iterate through satisfaction questions and submit configured answers."""
-    print("▶ Answering survey questions …")
+def _enter_price(page: Page, step: int) -> None:
+    """Enter the receipt price (XX.XX) on the price input page."""
+    price = config.PRICE
+    print(f"▶ Entering price: ${price}")
 
-    questions = list(config.RESPONSES.items())
-    page_num = 3
-
-    for label, value in questions:
-        # Many SMG surveys show one or a few questions per page.
-        # Select the appropriate radio button(s) and advance.
-        radios = page.locator("input[type='radio']:visible")
-        if radios.count() == 0:
-            # Page may have a different input type (dropdown, scale, etc.)
-            print(f"  ⚠  No radio buttons found for '{label}' – skipping")
-        else:
-            # If multiple radio groups on one page, handle each group.
-            groups: dict[str, list[object]] = {}
-            for i in range(radios.count()):
-                name = radios.nth(i).get_attribute("name") or f"group_{i}"
-                groups.setdefault(name, []).append(radios.nth(i))
-
-            for group_name, group_radios in groups.items():
-                # Pick the radio whose value matches the desired rating.
-                selected = False
-                for radio in group_radios:
-                    if radio.get_attribute("value") == value:
-                        radio.click()
-                        selected = True
-                        break
-                if not selected and group_radios:
-                    # Fallback: click the first radio (highest satisfaction).
-                    group_radios[0].click()
-
-        _screenshot(page, f"{page_num:02d}_{label}")
-        page_num += 1
-
-        try:
-            _click_next(page)
-        except PwTimeout:
-            print(f"  ⚠  Timed out clicking Next on '{label}' – may already be on next page")
-        except Exception as exc:
-            print(f"  ⚠  Error advancing past '{label}': {exc}")
-
-        print(f"  ✔  {label} → {value}")
-
-
-def step_additional_comments(page: Page) -> None:
-    """Fill in the optional free-text comment box if configured."""
-    if not config.ADDITIONAL_COMMENTS:
-        print("▶ Skipping additional comments (empty in config)")
+    parts = price.split(".")
+    if len(parts) != 2:
+        print(f"  ⚠  Price must be in XX.XX format, got: {price}")
         return
 
-    print("▶ Entering additional comments …")
-    textarea = page.locator("textarea:visible")
-    if textarea.count() > 0:
-        textarea.first.fill(config.ADDITIONAL_COMMENTS)
-        _screenshot(page, "90_comments")
+    dollars, cents = parts
+
+    dollar_field = page.locator(
+        "input#DollarSign, input[name='DollarSign'], input#Dollar, input[name='Dollar']"
+    )
+    cent_field = page.locator(
+        "input#CentSign, input[name='CentSign'], input#Cent, input[name='Cent']"
+    )
+
+    if dollar_field.count() > 0 and cent_field.count() > 0:
+        dollar_field.first.fill(dollars)
+        cent_field.first.fill(cents)
+        _screenshot(page, f"{step:02d}_price")
         _click_next(page)
-        print("  ✔  Comments submitted")
-    else:
-        print("  ⚠  No comment textarea found on this page")
+        return
+
+    text_inputs = page.locator("input[type='text']:visible")
+    if text_inputs.count() >= 2:
+        text_inputs.nth(0).fill(dollars)
+        text_inputs.nth(1).fill(cents)
+        _screenshot(page, f"{step:02d}_price")
+        _click_next(page)
+        return
+
+    if text_inputs.count() == 1:
+        text_inputs.first.fill(price)
+        _screenshot(page, f"{step:02d}_price")
+        _click_next(page)
+        return
+
+    _screenshot(page, f"{step:02d}_price_not_found")
+    print("  ⚠  Could not locate the price input field – check screenshot")
 
 
-def step_capture_validation_code(page: Page) -> None:
+def _capture_validation_code(page: Page) -> None:
     """Capture the validation/offer code shown at the end of the survey."""
     print("▶ Looking for validation code …")
-    _screenshot(page, "99_final_page")
 
-    # The code is usually displayed in a prominent element.
     selectors = [
-        ".ValCode",
-        "#ValCode",
-        "span.ValCode",
-        "div.ValCode",
-        ".CouponsContainer",
-        "#finishContent",
+        ".ValCode", "#ValCode", "span.ValCode", "div.ValCode",
+        ".CouponsContainer", "#finishContent",
     ]
     for sel in selectors:
         el = page.locator(sel)
@@ -236,7 +303,6 @@ def step_capture_validation_code(page: Page) -> None:
             print(f"{'=' * 50}\n")
             return
 
-    # Fallback: try to find any large, bold text on the final page.
     body_text = page.locator("body").inner_text()
     print("  ℹ  Could not locate a validation code element.")
     print("      Final page text (first 500 chars):")
@@ -246,8 +312,17 @@ def step_capture_validation_code(page: Page) -> None:
 # ── Main ─────────────────────────────────────────────────────────────────────
 
 def main() -> None:
+    # Load the survey page definitions from survey.txt.
+    survey_file = getattr(config, "SURVEY_FILE", "survey.txt")
+    pages = parse_survey_file(survey_file)
+
+    if not pages:
+        print("❌  No pages found in survey definition file – nothing to do.")
+        sys.exit(1)
+
     print("McDonald's Food for Thoughts – Survey Automation")
     print(f"Survey URL : {SURVEY_URL}")
+    print(f"Survey file: {survey_file}  ({len(pages)} pages)")
     print(f"Headless   : {config.HEADLESS}")
     print(f"Slow-mo    : {config.SLOW_MO}ms")
     print()
@@ -268,11 +343,19 @@ def main() -> None:
         page = context.new_page()
 
         try:
-            step_welcome(page)
-            step_enter_code(page)
-            step_answer_questions(page)
-            step_additional_comments(page)
-            step_capture_validation_code(page)
+            # Navigate to the survey once; then iterate through pages.
+            print("▶ Opening survey …")
+            page.goto(SURVEY_URL, wait_until="domcontentloaded", timeout=30_000)
+
+            for step, page_def in enumerate(pages, start=1):
+                page_type = page_def["type"]
+                handler = _PAGE_HANDLERS.get(page_type)
+                if handler is None:
+                    print(f"  ⚠  Unknown page type '{page_type}' for '{page_def['id']}' – skipping")
+                    continue
+                print(f"▶ Page {step}/{len(pages)}: {page_def['description']}")
+                handler(page, page_def, step)
+
             print("\n✅  Survey automation complete!")
         except Exception as exc:
             _screenshot(page, "error")
