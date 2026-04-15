@@ -106,12 +106,8 @@ def _wait_for_page_ready(page: Page, page_def: dict[str, Any]) -> None:
     timeout = 10_000  # ms
 
     try:
-        if page_type == "radio" and groups:
-            # Wait for the first radio group's inputs to be present.
-            page.locator(f"input[name='{groups[0]}']").first.wait_for(
-                state="attached", timeout=timeout,
-            )
-        elif page_type == "checkbox" and groups:
+        if page_type in ("radio", "checkbox") and groups:
+            # Wait for the first group's inputs to be present.
             page.locator(f"input[name='{groups[0]}']").first.wait_for(
                 state="attached", timeout=timeout,
             )
@@ -192,9 +188,10 @@ def _select_radio(page: Page, group_name: str, value: str) -> bool:
     # Strategy 2: click the parent branded-input container.  The survey
     # wraps each radio in a <td class="inputtyperbloption"> (table layout)
     # or a <div class="rbloption"> (vertical list layout).
+    escaped_id = radio_id.replace(".", "\\\\.")
     wrapper = page.locator(
-        f"td.inputtyperbloption:has(input#{radio_id.replace('.', '\\\\.')}), "
-        f"div.rbloption:has(input#{radio_id.replace('.', '\\\\.')})"
+        f"td.inputtyperbloption:has(input#{escaped_id}), "
+        f"div.rbloption:has(input#{escaped_id})"
     )
     if wrapper.count() > 0:
         try:
